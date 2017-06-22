@@ -84,6 +84,7 @@ def reportMatch(winner, loser):
     c = db.cursor()
     c.execute("INSERT INTO scorecard (id, win, loss) values (%s, 1, 0) ON CONFLICT (id) DO UPDATE SET win = scorecard.win + 1", (winner,))
     c.execute("INSERT INTO scorecard (id, win, loss) values (%s, 0,1) ON CONFLICT (id) DO UPDATE SET loss = scorecard.loss + 1", (loser,))
+
     db.commit()
     db.close()
 
@@ -128,16 +129,56 @@ def swissPairings():
     roster = c.fetchall()
     if len(roster) == 0:
       fill_roster()
+      c.execute("SELECT * FROM roster;")
+      roster = c.fetchall()
+    
     standings = playerStandings()
     if len(standings)==0:
       round = 1
       for i in xrange(0,len(roster),2):
         c.execute(
-        "INSERT INTO matchups (round, id_pairing) VALUES (%s, %s);", 
-        (round, str(roster[i][0]) + "_" + str(roster[i+1][0]),))
+        "INSERT INTO matchups (round, id1, id2) VALUES (%s, %s, %s);", 
+        (round, roster[i][0], roster[i+1][0],))
     else:
-      round = 1 + c.execute("SELECT max(round) from matchups;")
-      match_records = 1
+      c.execute("SELECT max(round) from matchups;")
+      round = 1 + c.fetchall()[0][0]
+      QUERY = '''
+	SELECT DISTINCT ON (id2) *  
+	  FROM (
+	    SELECT DISTINCT ON (id1) * 
+               FROM (SELECT a.id AS id1, b.id AS id2, a.win AS wins, a.loss AS losses 
+                 FROM scorecard AS a 
+                   JOIN scorecard AS b 
+                     ON a.win = b.win AND a.loss = b.loss) AS foo 
+                        WHERE id1 < id2) AS bar;
 
+      '''
+      c.execute(QUERY)
+      nextround = c.fetchall()
+      print nextround
+      for i in nextround:
+        c.execute(
+        "INSERT INTO matchups (round, id1, id2) VALUES (%s, %s, %s);", 
+        (round, i[0], i[1],))    
+    
     db.commit()
     db.close()
+
+    pick_a_winner(round)
+
+def pick_a_winner(round):
+    db = connect()
+    c = db.cursor()
+    c.execute("SELECT * FROM matchups WHERE matchups.round = %s;", (round,))
+    matchups = c.fetchall()
+    db.close()
+    for match in matchups:
+	result = random.randint(1,2)
+        winner = match[result]        
+        loser = match[len(match)-result]
+        reportMatch(winner, loser)
+        print round, winner, loser
+
+if __name__ == "__main__":
+  swissPairings()
+
