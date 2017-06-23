@@ -18,6 +18,7 @@ def deleteMatches():
     db = connect()
     c = db.cursor()
     c.execute("TRUNCATE matchups")
+    c.execute("UPDATE scorecard SET (win, loss) = (0, 0)")
     db.commit()
     db.close()
 
@@ -34,9 +35,8 @@ def countPlayers():
     db = connect()
     c = db.cursor()
     c.execute("SELECT COUNT(*) FROM roster")
-    print c.fetchall()[0]
+    return int(c.fetchall()[0][0])
     db.close()
-    
 
 def registerPlayer(name):
     """Adds a player to the tournament database.
@@ -50,6 +50,9 @@ def registerPlayer(name):
     db = connect()
     c = db.cursor()
     c.execute("INSERT INTO roster (player) VALUES (%s)", (bleach.clean(name),))
+    c.execute("SELECT id FROM roster WHERE player = %s", (bleach.clean(name),))
+    id = c.fetchall()[0][0]
+    c.execute("INSERT INTO scorecard (id, win, loss) values (%s, 0, 0)", (id,))
     db.commit()
     db.close()
 
@@ -70,6 +73,9 @@ def playerStandings():
     c = db.cursor()
     c.execute("SELECT scorecard.id, roster.player, scorecard.win, (scorecard.win + scorecard.loss) AS matches  FROM scorecard, roster WHERE scorecard.id = roster.id ORDER BY scorecard.win DESC")
     standings = c.fetchall()
+    if len(standings) == 0:
+      c.execute("SELECT * FROM roster;")
+      standings = c.fetchall()
     db.close()
     return standings
 
@@ -127,22 +133,28 @@ def swissPairings():
     c = db.cursor()
     c.execute("SELECT * FROM roster;")
     roster = c.fetchall()
+    matchup_list = []
+
     if len(roster) == 0:
       fill_roster()
       c.execute("SELECT * FROM roster;")
       roster = c.fetchall()
-    
+
     standings = playerStandings()
-    if len(standings)==0:
+    c.execute("SELECT * FROM matchups;")
+    
+
+    if len(c.fetchall()) == 0:
       round = 1
       for i in xrange(0,len(roster),2):
         c.execute(
         "INSERT INTO matchups (round, id1, id2) VALUES (%s, %s, %s);", 
         (round, roster[i][0], roster[i+1][0],))
+        matchup_list.append(match_player_id(roster[i][0], roster[i+1][0], c))
     else:
       c.execute("SELECT max(round) from matchups;")
       round = 1 + c.fetchall()[0][0]
-      QUERY = '''
+      '''QUERY = 
 	SELECT DISTINCT ON (id2) *  
 	  FROM (
 	    SELECT DISTINCT ON (id1) * 
@@ -153,18 +165,25 @@ def swissPairings():
                         WHERE id1 < id2) AS bar;
 
       '''
+      QUERY = "SELECT * FROM scorecard ORDER BY win DESC, loss ASC;"
       c.execute(QUERY)
       nextround = c.fetchall()
-      print nextround
-      for i in nextround:
+      for i in xrange(0,len(nextround),2):
+        id1 = nextround[i][0]
+        id2 = nextround[i+1][0]
         c.execute(
         "INSERT INTO matchups (round, id1, id2) VALUES (%s, %s, %s);", 
-        (round, i[0], i[1],))    
-    
+        (round, id1, id2,))  
+        matchup_list.append(match_player_id(id1, id2, c))
     db.commit()
-    db.close()
-
     pick_a_winner(round)
+    db.close()
+    return matchup_list
+
+def match_player_id(id1, id2, db_cursor):
+    db_cursor.execute("SELECT player FROM roster WHERE id IN (%s, %s)", (id1,id2,))
+    players = db_cursor.fetchall()
+    return [id1, players[0][0], id2, players[1][0]]
 
 def pick_a_winner(round):
     db = connect()
@@ -177,8 +196,8 @@ def pick_a_winner(round):
         winner = match[result]        
         loser = match[len(match)-result]
         reportMatch(winner, loser)
-        print round, winner, loser
 
 if __name__ == "__main__":
-  swissPairings()
+  a = swissPairings()
+  print a
 
